@@ -26,6 +26,13 @@ pygame.display.set_caption("Trap The Cat")
 clock = pygame.time.Clock()
 font = pygame.font.SysFont(None, 48)
 
+pygame.mixer.init()
+jump_sound = pygame.mixer.Sound("sounds/cat_jump.wav")
+mouse_dead_sound = pygame.mixer.Sound("sounds/mouse_dead.wav")
+place_block_sound = pygame.mixer.Sound("sounds/place_block.wav")
+place_mouse_sound = pygame.mixer.Sound("sounds/place_mouse.wav")
+cat_attack_sound = pygame.mixer.Sound("sounds/cat_attack.mp3")
+
 # --- טוענים ספרייטים ---
 def load_sprite_series(subfolder, count, base_path="sprites/cat", size=None):
     path_prefix = os.path.join(base_path, subfolder)
@@ -179,7 +186,7 @@ def animate_cat_move(start, end):
         screen.blit(img, img.get_rect(center=(ix, iy)))
         pygame.display.flip()
         pygame.time.delay(50)
-
+    
 def cat_move():
     global cat_pos, winner, game_over, bait
     options = [n for n in get_neighbors(cat_pos) if n not in blocked]
@@ -207,6 +214,7 @@ def cat_attack():
     attackable = [n for n in neighbors if n in blocked]
     if attackable and random.random() < 0.25:
         to_remove = random.choice(attackable)
+        cat_attack_sound.play()
         pos = get_cell_pos(cat_pos)
         for img in attack_images:
             draw_board(draw_cat=False)
@@ -262,8 +270,10 @@ while running:
                     if pygame.key.get_mods() & pygame.KMOD_SHIFT and not mouse_used:
                         bait = (row, col)
                         mouse_used = True
+                        place_mouse_sound.play()
                     elif (row, col) != tuple(cat_pos) and (row, col) not in blocked:
                         blocked.add((row, col))
+                        place_block_sound.play()
                         player_turn = False
 
     if not player_turn and not game_over:

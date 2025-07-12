@@ -15,10 +15,10 @@ FPS = 30
 MINIMAX_DEPTH = 3 # Adjust for difficulty/performance. 2-3 is a good balance.
 
 # --- Colors (Sand/Cream Palette) ---
-TILE_COLOR = (222, 203, 164)
-BLOCKED_COLOR = (170, 140, 110)
+TILE_COLOR = (240, 225, 200)
+BLOCKED_COLOR = (160, 130, 100)
 BAIT_COLOR = (250, 230, 140)
-BG_COLOR = (240, 230, 210)
+BG_COLOR = (255, 0, 0)
 TEXT_COLOR = (50, 30, 20)
 BUTTON_COLOR = (120, 100, 90)
 
@@ -30,6 +30,15 @@ pygame.display.set_caption("Trap The Cat - AI Version")
 clock = pygame.time.Clock()
 font = pygame.font.Font("assets/font/game-quotes.otf", 36)
 
+# --- Load Assets ---
+grass_bg = pygame.image.load("assets/images/grass.png").convert()
+grass_bg = pygame.transform.scale(grass_bg, (WIDTH, HEIGHT))
+cat_logo = pygame.image.load("assets/images/cat_logo.png").convert_alpha()
+cat_logo = pygame.transform.scale(cat_logo, (50, 50))  
+cat_laugh_image = pygame.image.load("assets/images/cat_win.png").convert_alpha()
+cat_laugh_image = pygame.transform.scale(cat_laugh_image, (200, 200))  # אתה יכול לשנות את הגודל
+cat_sad_image = pygame.image.load("assets/images/cat_lose.png").convert_alpha()
+cat_sad_image = pygame.transform.scale(cat_sad_image, (200, 200))  # אתה יכול לשנות את הגודל
 # --- Asset Loading ---
 def load_sound(filename):
     path = os.path.join("assets/sounds", filename)
@@ -37,7 +46,7 @@ def load_sound(filename):
         return pygame.mixer.Sound(path)
     return None
 
-
+# Load all sounds
 jump_sound = load_sound("cat_jump.wav")
 mouse_dead_sound = load_sound("mouse_dead.wav")
 place_block_sound = load_sound("place_block.wav")
@@ -47,7 +56,6 @@ background_music_sound = load_sound("background_music.wav")
 victory_sound = load_sound("victory.wav")
 defeat_sound = load_sound("defeat.wav")
 cat_dead_sound = load_sound("cat_dead.wav")
-
 
 # Loads a sequence of sprite images from a specific subfolder, optionally scaling them to a given size
 def load_sprite_series(subfolder, count, base_path="assets/sprites/cat", size=None):
@@ -79,6 +87,7 @@ idle_images_flipped = [pygame.transform.flip(img, True, False) for img in idle_i
 # --- Global Game State Variables ---
 blocked = set()
 bait = None
+cat_ignored_bait = False
 cat_pos = (GRID_SIZE // 2, GRID_SIZE // 2)
 game_over = False
 winner = None
@@ -148,7 +157,7 @@ def a_star_search(start_pos, current_blocked, goal_pos=None):
 
     while open_set:
         _, current_g, current_pos = heapq.heappop(open_set)
-
+        # Check if we reached the goal
         is_at_goal = (goal_pos and current_pos == goal_pos) or (goal_pos is None and is_at_edge(current_pos))
         if is_at_goal:
             path = []
@@ -161,7 +170,7 @@ def a_star_search(start_pos, current_blocked, goal_pos=None):
         for neighbor in get_neighbors(current_pos):
             if neighbor in current_blocked:
                 continue
-            
+            # Calculate tentative g_score
             tentative_g_score = current_g + 1
             if tentative_g_score < g_score[neighbor]:
                 came_from[neighbor] = current_pos
@@ -240,21 +249,37 @@ def find_best_move():
 def draw_circle_with_shadow(color, pos, radius, shadow_offset=(3, 3)):
     shadow_color = (0, 0, 0, 50)
     surf = pygame.Surface((radius*2+shadow_offset[0], radius*2+shadow_offset[1]), pygame.SRCALPHA)
+
+    # shadow
     pygame.draw.circle(surf, shadow_color, (radius + shadow_offset[0], radius + shadow_offset[1]), radius)
-    pygame.draw.circle(surf, color, (radius, radius), radius)
+
+    # main circle
+    tile_color = color + (230,)  
+    pygame.draw.circle(surf, tile_color, (radius, radius), radius)
+
     screen.blit(surf, (pos[0]-radius, pos[1]-radius))
+
 
 # Draws the HUD at the top of the screen, showing bait and attack status
 def draw_hud():
     pygame.draw.rect(screen, (100, 85, 70), (0, 0, WIDTH, 60))
-    bait_text = "Bait: Used" if bait_used else "Bait: Available"
-    attack_text = "Cat Attack: Used" if cat_has_attacked_in_game else "Cat Attack: Available"
-
-    bait_surf = font.render(bait_text, True, TEXT_COLOR)
-    attack_surf = font.render(attack_text, True, (200, 50, 50))
     
+    bait_text = "Bait: Used" if bait_used else "Bait: Available"
+    attack_text = "Attack: Used" if cat_has_attacked_in_game else "Attack: Available"
+
+    bait_surf = font.render(bait_text, True, (220, 220, 220))    
+    attack_surf = font.render(attack_text, True, (200, 40, 40))  
+
+    # Draw bait and attack status
     screen.blit(bait_surf, (20, 15))
     screen.blit(attack_surf, (WIDTH - attack_surf.get_width() - 20, 15))
+
+    # Draw cat logo
+    if cat_logo:  
+        logo_x = (WIDTH - cat_logo.get_width()) // 2
+        logo_y = (60 - cat_logo.get_height()) // 2
+        screen.blit(cat_logo, (logo_x, logo_y))
+
 
 
 # Animates a sprite series at a given position with a delay between frames
@@ -288,12 +313,15 @@ def animate_cat_move(start, end):
         pygame.display.flip()
         pygame.time.delay(50)
 
+
+
 # Draws the game board, including the cat, bait, and blocked tiles
 def draw_board(draw_cat=True):
     global cat_idle_index, last_idle_update, cat_dead_animation_done, dead_final_sprite
-    screen.fill(BG_COLOR)
+    screen.blit(grass_bg, (0, 0))
     draw_hud()
     now = pygame.time.get_ticks()
+    
 
     for row in range(GRID_SIZE):
         for col in range(GRID_SIZE):
@@ -346,17 +374,35 @@ def draw_game_over():
     overlay.fill((0, 0, 0, 150))
     screen.blit(overlay, (0, 0))
     
+    # Draw the game over logo
+    if winner == 'cat' and cat_laugh_image:
+        image_rect = cat_laugh_image.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 100))
+        screen.blit(cat_laugh_image, image_rect)
+    elif winner == 'player' and cat_sad_image:
+        image_rect = cat_sad_image.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 100))
+        screen.blit(cat_sad_image, image_rect)
+
+    # Draw the winner message
     msg = "Cat Escaped!" if winner == 'cat' else "You Trapped The Cat!"
     text = font.render(msg, True, (255, 255, 255))
-    text_rect = text.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 40))
+    text_rect = text.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 60))
     screen.blit(text, text_rect)
-    
+
+    # Draw the restart button
     button_rect = pygame.Rect(0, 0, 180, 60)
-    button_rect.center = (WIDTH // 2, HEIGHT // 2 + 40)
-    pygame.draw.rect(screen, BUTTON_COLOR, button_rect, border_radius=10)
+    button_rect.center = (WIDTH // 2, HEIGHT // 2 + 130)
+    mouse_pos = pygame.mouse.get_pos()
+    hover = button_rect.collidepoint(mouse_pos)
+
+    color = (150, 120, 110) if hover else BUTTON_COLOR
+    pygame.draw.rect(screen, color, button_rect, border_radius=10)
+    pygame.draw.rect(screen, (255, 255, 255), button_rect, 2, border_radius=10)
+
     restart_text = font.render("Restart", True, TEXT_COLOR)
     screen.blit(restart_text, restart_text.get_rect(center=button_rect.center))
+    
     return button_rect
+
 
 def animate_attack_with_tile_flash(images, cat_pos, attacked_tile):
     cat_center = get_cell_center(cat_pos)
@@ -365,15 +411,26 @@ def animate_attack_with_tile_flash(images, cat_pos, attacked_tile):
 
     # --- Attack animation (cat + flashing tile) ---
     for i, img in enumerate(images):
+    # --- Flash the screen white for a brief moment ---
+        if i == 0:
+            flash = pygame.Surface((WIDTH, HEIGHT))
+            flash.fill((255, 255, 255))
+            flash.set_alpha(100)
+            screen.blit(flash, (0, 0))
+            pygame.display.flip()
+            pygame.time.delay(30)
+
         draw_board(draw_cat=False)
 
-        # Flash tile (alternate color)
+        # Flash tile
         flash_color = flash_colors[i % len(flash_colors)]
         pygame.draw.circle(screen, flash_color, tile_center, CELL_RADIUS)
 
-        # Draw cat attacking
-        screen.blit(img, img.get_rect(center=cat_center))
-
+        # Draw attacking cat
+        dx = attacked_tile[1] - cat_pos[1]
+        flip = dx < 0
+        img_to_draw = pygame.transform.flip(img, True, False) if flip else img
+        screen.blit(img_to_draw, img_to_draw.get_rect(center=cat_center))
         pygame.display.flip()
         pygame.time.delay(100)
 
@@ -398,12 +455,12 @@ def animate_attack_with_tile_flash(images, cat_pos, attacked_tile):
 
 # --- Game Flow ---
 def cat_turn():
-    global cat_pos, winner, game_over, bait, cat_attacked_this_turn, blocked, cat_has_attacked_in_game
+    global cat_pos, cat_ignored_bait, winner, game_over, bait, cat_attacked_this_turn, blocked, cat_has_attacked_in_game
     
     cat_attacked_this_turn = False
 
     # 1. Bait-Seeking Logic (Smart Check)
-    if bait:
+    if bait and not cat_ignored_bait:
         path_to_bait = a_star_search(cat_pos, blocked, goal_pos=bait)
         if path_to_bait and len(path_to_bait) > 1:
             future_pos = path_to_bait[1]
@@ -441,7 +498,9 @@ def cat_turn():
                         winner = 'cat'
                         handle_game_over_sounds()
                     return
-
+                else:
+                    cat_ignored_bait = True
+           
     # 2. Decision Phase: Compare best move vs. best attack
     best_regular_move, best_move_score = find_best_move()
 
@@ -500,7 +559,7 @@ def cat_turn():
 # --- Reset Game Function ---
 # Resets the game state to start a new game
 def reset_game():
-    global blocked, bait, cat_pos, winner, game_over, bait_used, cat_has_attacked_in_game
+    global blocked, cat_ignored_bait, bait, cat_pos, winner, game_over, bait_used, cat_has_attacked_in_game
     global cat_idle_index, last_idle_update, cat_facing_left, cat_attacked_this_turn
     global cat_dead_animation_done, dead_final_sprite
     
@@ -509,6 +568,7 @@ def reset_game():
     cat_pos = (GRID_SIZE // 2, GRID_SIZE // 2)
     winner = None
     game_over = False
+    cat_ignored_bait = False
     bait_used = False
     cat_has_attacked_in_game = False # Reset the per-game attack flag
     

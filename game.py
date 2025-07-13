@@ -579,8 +579,8 @@ def reset_game():
     cat_dead_animation_done = False
     dead_final_sprite = None
     
-    # Randomly place 10 blocked tiles, ensuring they are not on the cat's position
-    while len(blocked) < 10:
+    # Randomly place 8 blocked tiles, ensuring they are not on the cat's position
+    while len(blocked) < 8:
         r = random.randint(0, GRID_SIZE - 1)
         c = random.randint(0, GRID_SIZE - 1)
         cell = (r, c)

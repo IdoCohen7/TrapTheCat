@@ -403,6 +403,34 @@ def draw_game_over():
     
     return button_rect
 
+def bait_is_a_trap(cat_pos, bait_pos, blocked_set):
+    """
+    Simulates the path to the bait and checks if it leads to a trap.
+    Returns True if bait appears dangerous (likely to trap the cat), else False.
+    """
+    path_to_bait = a_star_search(cat_pos, blocked_set, goal_pos=bait_pos)
+    if not path_to_bait or len(path_to_bait) < 2:
+        return False  # No path or already on bait – not enough info
+
+    # Simulate the path step by step
+    for step in path_to_bait[1:]:  # Skip current position
+        temp_blocked = blocked_set.copy()
+
+        # Try to simulate a "smart" player blocking the cat's next move
+        escape_path = a_star_search(step, temp_blocked)
+        if not escape_path or len(escape_path) < 2:
+            return True  # Already trapped
+
+        dangerous_step = escape_path[1]
+        temp_blocked.add(dangerous_step)
+
+        # Recheck escape options after hypothetical block
+        escape_after_block = a_star_search(step, temp_blocked)
+        if not escape_after_block:
+            return True  # No way out after bait step
+
+    return False  # Passed all checks – bait seems safe
+
 
 def animate_attack_with_tile_flash(images, cat_pos, attacked_tile):
     cat_center = get_cell_center(cat_pos)
@@ -450,76 +478,91 @@ def animate_attack_with_tile_flash(images, cat_pos, attacked_tile):
         pygame.display.flip()
         pygame.time.delay(80)  # Shorter delay per frame
 
+def score_bait_path(cat_pos, bait_pos, blocked_set):
+    """
+    Returns a numeric score evaluating how safe/smart it is to go for the bait.
+    Higher score = better opportunity, negative = risky trap.
+    """
+    path = a_star_search(cat_pos, blocked_set, goal_pos=bait_pos)
+    if not path or len(path) < 2:
+        return -1000  # Unreachable or too close to judge
+
+    total_risk = 0
+    total_escape = 0
+    steps_checked = 0
+
+    for step in path[1:]:
+        temp_blocked = blocked_set.copy()
+        escape_path = a_star_search(step, temp_blocked)
+        if not escape_path or len(escape_path) < 2:
+            total_risk += 1
+            continue
+
+        dangerous_block = escape_path[1]
+        temp_blocked.add(dangerous_block)
+        escape_after = a_star_search(step, temp_blocked)
+        if not escape_after:
+            total_risk += 1
+        else:
+            total_escape += 1
+
+        steps_checked += 1
+
+    if steps_checked == 0:
+        return -1000  # No real info
+
+    score = (total_escape - total_risk) * 10 - len(path)  # prefer short, safe paths
+    return score
 
 
 
-# --- Game Flow ---
 def cat_turn():
     global cat_pos, cat_ignored_bait, winner, game_over, bait, cat_attacked_this_turn, blocked, cat_has_attacked_in_game
-    
+
     cat_attacked_this_turn = False
 
-    # 1. Bait-Seeking Logic (Smart Check)
+    # --- 0. Evaluate bait (trap check + scoring) ---
+    bait_score = None
+    path_to_bait = None
+    future_pos = None
     if bait and not cat_ignored_bait:
-        path_to_bait = a_star_search(cat_pos, blocked, goal_pos=bait)
-        if path_to_bait and len(path_to_bait) > 1:
-            future_pos = path_to_bait[1]
+        # Step 1: Check if bait is a definite trap
+        if bait_is_a_trap(cat_pos, bait, blocked):
+            cat_ignored_bait = True
+        else:
+            # Step 2: Score the bait opportunity
+            bait_score = score_bait_path(cat_pos, bait, blocked)
+            if bait_score > -1000:
+                path_to_bait = a_star_search(cat_pos, blocked, goal_pos=bait)
+                if path_to_bait and len(path_to_bait) > 1:
+                    future_pos = path_to_bait[1]
 
-            # Check if the cat can reach the bait without being blocked by the player
-            temp_blocked = blocked.copy()
-            temp_blocked_after_player = temp_blocked.copy()
-
-            # Simulate the player blocking the best move
-            if future_pos == bait:
-                bait_removed = True
-            else:
-                bait_removed = False
-
-            # Check if the cat can escape after the player blocks
-            escape_path = a_star_search(future_pos, temp_blocked)
-            if escape_path and len(escape_path) > 1:
-                dangerous_block = escape_path[1]
-                temp_blocked_after_player.add(dangerous_block)
-
-                escape_after_block = a_star_search(future_pos, temp_blocked_after_player)
-                # If the cat can escape after the player blocks, it will go for the bait
-                if escape_after_block:
-                    if jump_sound: jump_sound.play()
-                    animate_cat_move(cat_pos, future_pos)
-                    cat_pos = future_pos
-
-                    # Move complete, handle bait if needed
-                    if bait and cat_pos == bait:
-                        if mouse_dead_sound: mouse_dead_sound.play()
-                        bait = None
-
-                    if is_at_edge(cat_pos):
-                        game_over = True
-                        winner = 'cat'
-                        handle_game_over_sounds()
-                    return
-                else:
-                    cat_ignored_bait = True
-           
-    # 2. Decision Phase: Compare best move vs. best attack
+    # --- 1. Find best regular move using Minimax ---
     best_regular_move, best_move_score = find_best_move()
 
+    # --- 2. Check attack option ---
     best_attack_score = -math.inf
     block_to_attack = None
     if not cat_has_attacked_in_game:
         attackable = [n for n in get_neighbors(cat_pos) if n in blocked]
-        if attackable:
-            for block in attackable:
-                temp_blocked = blocked.copy()
-                temp_blocked.remove(block)
-                current_attack_score = evaluate_board(cat_pos, temp_blocked)
-                if current_attack_score > best_attack_score: 
-                    best_attack_score = current_attack_score
-                    block_to_attack = block
+        for block in attackable:
+            temp_blocked = blocked.copy()
+            temp_blocked.remove(block)
+            score = evaluate_board(cat_pos, temp_blocked)
+            if score > best_attack_score:
+                best_attack_score = score
+                block_to_attack = block
 
-    # 3. Action Phase
-    if block_to_attack is not None and best_attack_score > best_move_score:
-        # Attack first
+    # --- 3. Choose the best option ---
+    chosen_move = best_regular_move
+    move_reason = "regular"
+
+    if bait_score is not None and bait_score > best_move_score and future_pos:
+        chosen_move = future_pos
+        move_reason = "bait"
+
+    if block_to_attack and best_attack_score > max(best_move_score, bait_score or -math.inf):
+        # Perform attack first
         if cat_attack_sound:
             cat_attack_sound.play()
         if attack_images:
@@ -528,33 +571,36 @@ def cat_turn():
         cat_attacked_this_turn = True
         cat_has_attacked_in_game = True
 
-        # Recalculate best move after the block was removed
-        best_regular_move, _ = find_best_move()
+        # Recalculate best move after attack
+        best_regular_move, best_move_score = find_best_move()
+        chosen_move = best_regular_move
+        move_reason = "attack_then_move"
 
-    # Then move
-    new_pos = best_regular_move
-    if new_pos:
+    # --- 4. Move to selected tile ---
+    if chosen_move:
         if jump_sound:
             jump_sound.play()
-        animate_cat_move(cat_pos, new_pos)
-        cat_pos = new_pos
+        animate_cat_move(cat_pos, chosen_move)
+        cat_pos = chosen_move
     else:
         game_over = True
         winner = 'player'
         handle_game_over_sounds()
         return
 
-    # --- Final bait check (NEW!) ---
+    # --- 5. Handle bait if reached ---
     if bait and cat_pos == bait:
         if mouse_dead_sound:
             mouse_dead_sound.play()
         bait = None
 
-    # Final win check
+    # --- 6. Final win condition check ---
     if is_at_edge(cat_pos):
         game_over = True
         winner = 'cat'
         handle_game_over_sounds()
+
+
 
 # --- Reset Game Function ---
 # Resets the game state to start a new game
